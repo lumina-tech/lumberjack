@@ -107,6 +107,9 @@ type Logger struct {
 	// using gzip. The default is not to perform compression.
 	Compress bool `json:"compress" yaml:"compress"`
 
+	// LogCompletedChan is called when milling is completed.
+	LogCompletedChan chan bool
+
 	size int64
 	file *os.File
 	mu   sync.Mutex
@@ -127,6 +130,25 @@ var (
 	// to disk.
 	megabyte = 1024 * 1024
 )
+
+// GetLogFiles returns list of compressed log files
+func (l *Logger) GetLogFiles(compressed bool) ([]string, error) {
+	logs, err := l.oldLogFiles()
+	if err != nil {
+		return nil, err
+	}
+	results := []string{}
+	for _, f := range logs {
+		isCompressed := strings.HasSuffix(f.Name(), compressSuffix)
+		fn := filepath.Join(l.dir(), f.Name())
+		if compressed && isCompressed {
+			results = append(results, fn)
+		} else if !compressed && !isCompressed {
+			results = append(results, fn)
+		}
+	}
+	return results, nil
+}
 
 // Write implements io.Writer.  If a write would cause the log file to be larger
 // than MaxSize, the file is closed, renamed to include a timestamp of the
@@ -367,6 +389,13 @@ func (l *Logger) millRunOnce() error {
 		errCompress := compressLogFile(fn, fn+compressSuffix)
 		if err == nil && errCompress != nil {
 			err = errCompress
+		}
+	}
+
+	if l.LogCompletedChan != nil {
+		select {
+		case l.LogCompletedChan <- true:
+		default:
 		}
 	}
 
